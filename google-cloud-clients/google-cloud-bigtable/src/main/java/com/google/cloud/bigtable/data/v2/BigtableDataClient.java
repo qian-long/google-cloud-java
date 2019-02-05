@@ -18,14 +18,15 @@ package com.google.cloud.bigtable.data.v2;
 import com.google.api.core.ApiFuture;
 import com.google.api.core.BetaApi;
 import com.google.api.core.InternalApi;
+import com.google.api.gax.rpc.ApiExceptions;
 import com.google.api.gax.rpc.ResponseObserver;
 import com.google.api.gax.rpc.ServerStream;
 import com.google.api.gax.rpc.ServerStreamingCallable;
 import com.google.api.gax.rpc.UnaryCallable;
 import com.google.cloud.bigtable.data.v2.models.BulkMutation;
-import com.google.cloud.bigtable.data.v2.models.InstanceName;
 import com.google.cloud.bigtable.data.v2.models.BulkMutationBatcher;
 import com.google.cloud.bigtable.data.v2.models.ConditionalRowMutation;
+import com.google.cloud.bigtable.data.v2.models.Filters.Filter;
 import com.google.cloud.bigtable.data.v2.models.KeyOffset;
 import com.google.cloud.bigtable.data.v2.models.Query;
 import com.google.cloud.bigtable.data.v2.models.ReadModifyWriteRow;
@@ -36,6 +37,7 @@ import com.google.cloud.bigtable.data.v2.stub.EnhancedBigtableStub;
 import com.google.protobuf.ByteString;
 import java.io.IOException;
 import java.util.List;
+import javax.annotation.Nullable;
 
 /**
  * Client for reading from and writing to existing Bigtable tables.
@@ -44,8 +46,7 @@ import java.util.List;
  * get started:
  *
  * <pre>{@code
- * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
- * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+ * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
  *   for(Row row : bigtableDataClient.readRows(Query.create("[TABLE]")) {
  *     // Do something with row
  *   }
@@ -68,13 +69,13 @@ import java.util.List;
  *       service.
  * </ol>
  *
- * <p>All RPC related errors are represented as subclasses of {@link com.google.api.gax.rpc.ApiException}.
- * For example, a nonexistent table will trigger a {@link com.google.api.gax.rpc.NotFoundException}.
- * Async methods will wrap the error inside the future. Synchronous methods will re-throw the async
- * error but will try to preserve the caller's stacktrace by attaching a suppressed exception at the
- * callsite. This allows callers to use typesafe exceptions, without losing their callsite.
- * Streaming methods (ie. readRows) will re-throw the async exception (like sync methods) when
- * starting iteration.
+ * <p>All RPC related errors are represented as subclasses of {@link
+ * com.google.api.gax.rpc.ApiException}. For example, a nonexistent table will trigger a {@link
+ * com.google.api.gax.rpc.NotFoundException}. Async methods will wrap the error inside the future.
+ * Synchronous methods will re-throw the async error but will try to preserve the caller's
+ * stacktrace by attaching a suppressed exception at the callsite. This allows callers to use
+ * typesafe exceptions, without losing their callsite. Streaming methods (ie. readRows) will
+ * re-throw the async exception (like sync methods) when starting iteration.
  *
  * <p>See the individual methods for example code.
  *
@@ -86,7 +87,8 @@ import java.util.List;
  * <pre>{@code
  * BigtableDataSettings bigtableDataSettings =
  *     BigtableDataSettings.newBuilder()
- *         .setInstanceName(InstanceName.of("[PROJECT]", "[INSTANCE]"))
+ *         .setProjectId("[PROJECT]")
+ *         .setInstanceId("[INSTANCE]")
  *         .setCredentialsProvider(FixedCredentialsProvider.create(myCredentials))
  *         .build();
  * try(BigtableDataClient bigtableDataClient = BigtableDataClient.create(bigtableDataSettings)) {
@@ -99,7 +101,8 @@ import java.util.List;
  * <pre>{@code
  * BigtableDataSettings bigtableDataSettings =
  *     BigtableDataSettings.newBuilder()
- *       .setInstanceName(InstanceName.of("[PROJECT]", "[INSTANCE]"))
+ *       .setProjectId("[PROJECT]")
+ *       .setInstanceId("[INSTANCE]")
  *       .setEndpoint(myEndpoint).build();
  * try(BigtableDataClient bigtableDataClient = BigtableDataClient.create(bigtableDataSettings)) {
  *   // ..
@@ -112,11 +115,28 @@ public class BigtableDataClient implements AutoCloseable {
   /**
    * Constructs an instance of BigtableDataClient with default settings.
    *
-   * @param instanceName The instance to connect to.
+   * @param projectId The project id of the instance to connect to.
+   * @param instanceId The id of the instance to connect to.
    * @return A new client.
    * @throws IOException If any.
    */
-  public static BigtableDataClient create(InstanceName instanceName) throws IOException {
+  public static BigtableDataClient create(String projectId, String instanceId) throws IOException {
+    BigtableDataSettings settings =
+        BigtableDataSettings.newBuilder().setProjectId(projectId).setInstanceId(instanceId).build();
+    return create(settings);
+  }
+
+  /**
+   * Constructs an instance of BigtableDataClient with default settings.
+   *
+   * @param instanceName The instance to connect to.
+   * @return A new client.
+   * @throws IOException If any.
+   * @deprecated Please use {@link #create(String, String)}.
+   */
+  @Deprecated
+  public static BigtableDataClient create(
+      com.google.cloud.bigtable.data.v2.models.InstanceName instanceName) throws IOException {
     BigtableDataSettings settings =
         BigtableDataSettings.newBuilder().setInstanceName(instanceName).build();
     return create(settings);
@@ -137,14 +157,146 @@ public class BigtableDataClient implements AutoCloseable {
   }
 
   /**
-   * Convenience method for asynchronously reading a single row. If the row does not exist, the
-   * future's value will be null.
+   * Convenience method for synchronously reading a single row. If the row does not exist, the value
+   * will be null.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{code
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
+   *   String tableId = "[TABLE]";
+   *
+   *   Row row = bigtableDataClient.readRow(tableId, ByteString.copyFromUtf8("key"));
+   *   // Do something with row, for example, display all cells
+   *   if(row != null) {
+   *     System.out.println(row.getKey().toStringUtf8());
+   *     for(RowCell cell : row.getCells()) {
+   *        System.out.printf("Family: %s   Qualifier: %s   Value: %s", cell.getFamily(),
+   *           cell.getQualifier().toStringUtf8(), cell.getValue().toStringUtf8());
+   *     }
+   *   }
+   * } catch(ApiException e) {
+   *   e.printStackTrace();
+   * }
+   * }</pre>
+   *
+   * @throws com.google.api.gax.rpc.ApiException when a serverside error occurs
+   */
+  public Row readRow(String tableId, ByteString rowKey) {
+    return ApiExceptions.callAndTranslateApiException(readRowAsync(tableId, rowKey, null));
+  }
+
+  /**
+   * Convenience method for synchronously reading a single row. If the row does not exist, the value
+   * will be null.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{code
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
+   *   String tableId = "[TABLE]";
+   *
+   *   Row row = bigtableDataClient.readRow(tableId, "key");
+   *   // Do something with row, for example, display all cells
+   *   if(row != null) {
+   *     System.out.println(row.getKey().toStringUtf8());
+   *      for(RowCell cell : row.getCells()) {
+   *        System.out.printf("Family: %s   Qualifier: %s   Value: %s", cell.getFamily(),
+   *           cell.getQualifier().toStringUtf8(), cell.getValue().toStringUtf8());
+   *      }
+   *   }
+   * } catch(ApiException e) {
+   *   e.printStackTrace();
+   * }
+   * }</pre>
+   *
+   * @throws com.google.api.gax.rpc.ApiException when a serverside error occurs
+   */
+  public Row readRow(String tableId, String rowKey) {
+    return ApiExceptions.callAndTranslateApiException(
+        readRowAsync(tableId, ByteString.copyFromUtf8(rowKey), null));
+  }
+
+  /**
+   * Convenience method for synchronously reading a single row. If the row does not exist, the value
+   * will be null.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{@code
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
+   *   String tableId = "[TABLE]";
+   *
+   *  // Build the filter expression
+   *  Filter filter = FILTERS.chain()
+   *         .filter(FILTERS.qualifier().regex("prefix.*"))
+   *         .filter(FILTERS.limit().cellsPerRow(10));
+   *
+   *   Row row = bigtableDataClient.readRow(tableId, "key", filter);
+   *   // Do something with row, for example, display all cells
+   *   if(row != null) {
+   *     System.out.println(row.getKey().toStringUtf8());
+   *      for(RowCell cell : row.getCells()) {
+   *        System.out.printf("Family: %s   Qualifier: %s   Value: %s", cell.getFamily(),
+   *           cell.getQualifier().toStringUtf8(), cell.getValue().toStringUtf8());
+   *      }
+   *   }
+   * } catch(ApiException e) {
+   *   e.printStackTrace();
+   * }
+   * }</pre>
+   *
+   * @throws com.google.api.gax.rpc.ApiException when a serverside error occurs
+   */
+  public Row readRow(String tableId, String rowKey, @Nullable Filter filter) {
+    return ApiExceptions.callAndTranslateApiException(
+        readRowAsync(tableId, ByteString.copyFromUtf8(rowKey), filter));
+  }
+
+  /**
+   * Convenience method for synchronously reading a single row. If the row does not exist, the value
+   * will be null.
    *
    * <p>Sample code:
    *
    * <pre>{@code
    * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
    * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   *   String tableId = "[TABLE]";
+   *
+   *  // Build the filter expression
+   *  Filter filter = FILTERS.chain()
+   *         .filter(FILTERS.qualifier().regex("prefix.*"))
+   *         .filter(FILTERS.limit().cellsPerRow(10));
+   *
+   *   Row row = bigtableDataClient.readRow(tableId, ByteString.copyFromUtf8("key"), filter);
+   *   // Do something with row, for example, display all cells
+   *   if(row != null) {
+   *     System.out.println(row.getKey().toStringUtf8());
+   *      for(RowCell cell : row.getCells()) {
+   *        System.out.printf("Family: %s   Qualifier: %s   Value: %s", cell.getFamily(),
+   *           cell.getQualifier().toStringUtf8(), cell.getValue().toStringUtf8());
+   *      }
+   *   }
+   * } catch(ApiException e) {
+   *   e.printStackTrace();
+   * }
+   * }</pre>
+   *
+   * @throws com.google.api.gax.rpc.ApiException when a serverside error occurs
+   */
+  public Row readRow(String tableId, ByteString rowKey, @Nullable Filter filter) {
+    return ApiExceptions.callAndTranslateApiException(readRowAsync(tableId, rowKey, filter));
+  }
+
+  /**
+   * Convenience method for asynchronously reading a single row. If the row does not exist, the
+   * future's value will be null.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{@code
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   String tableId = "[TABLE]";
    *
    *   ApiFuture<Row> futureResult = bigtableDataClient.readRowAsync(tableId,  "key");
@@ -158,14 +310,16 @@ public class BigtableDataClient implements AutoCloseable {
    *       }
    *     }
    *     public void onSuccess(Row result) {
-   *       System.out.println("Got row: " + result);
+   *       if (result != null) {
+   *          System.out.println("Got row: " + result);
+   *       }
    *     }
    *   }, MoreExecutors.directExecutor());
    * }
    * }</pre>
    */
   public ApiFuture<Row> readRowAsync(String tableId, String rowKey) {
-    return readRowAsync(tableId, ByteString.copyFromUtf8(rowKey));
+    return readRowAsync(tableId, ByteString.copyFromUtf8(rowKey), null);
   }
 
   /**
@@ -175,8 +329,7 @@ public class BigtableDataClient implements AutoCloseable {
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   String tableId = "[TABLE]";
    *
    *   ApiFuture<Row> futureResult = bigtableDataClient.readRowAsync(tableId,  ByteString.copyFromUtf8("key"));
@@ -190,18 +343,182 @@ public class BigtableDataClient implements AutoCloseable {
    *       }
    *     }
    *     public void onSuccess(Row row) {
-   *       System.out.println("Got row: " + row);
+   *       if (result != null) {
+   *          System.out.println("Got row: " + result);
+   *       }
    *     }
    *   }, MoreExecutors.directExecutor());
    * }
    * }</pre>
    */
   public ApiFuture<Row> readRowAsync(String tableId, ByteString rowKey) {
-    return readRowsCallable().first().futureCall(Query.create(tableId).rowKey(rowKey));
+    return readRowAsync(tableId, rowKey, null);
   }
 
   /**
-   * Convenience method for synchronous streaming the results of a {@link Query}.
+   * Convenience method for asynchronously reading a single row. If the row does not exist, the
+   * future's value will be null.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{@code
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
+   *   String tableId = "[TABLE]";
+   *
+   *  // Build the filter expression
+   *   Filters.Filter filter = FILTERS.chain()
+   *         .filter(FILTERS.qualifier().regex("prefix.*"))
+   *         .filter(FILTERS.limit().cellsPerRow(10));
+   *
+   *   ApiFuture<Row> futureResult = bigtableDataClient.readRowAsync(tableId, "key", filter);
+   *
+   *   ApiFutures.addCallback(futureResult, new ApiFutureCallback<Row>() {
+   *     public void onFailure(Throwable t) {
+   *       if (t instanceof NotFoundException) {
+   *         System.out.println("Tried to read a non-existent table");
+   *       } else {
+   *         t.printStackTrace();
+   *       }
+   *     }
+   *     public void onSuccess(Row row) {
+   *       if (result != null) {
+   *          System.out.println("Got row: " + result);
+   *       }
+   *     }
+   *   }, MoreExecutors.directExecutor());
+   * }
+   * }</pre>
+   */
+  public ApiFuture<Row> readRowAsync(String tableId, String rowKey, @Nullable Filter filter) {
+    return readRowAsync(tableId, ByteString.copyFromUtf8(rowKey), filter);
+  }
+
+  /**
+   * Convenience method for asynchronously reading a single row. If the row does not exist, the
+   * future's value will be null.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{@code
+   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   *   String tableId = "[TABLE]";
+   *
+   *  // Build the filter expression
+   *  Filters.Filter filter = FILTERS.chain()
+   *         .filter(FILTERS.qualifier().regex("prefix.*"))
+   *         .filter(FILTERS.limit().cellsPerRow(10));
+   *
+   *   ApiFuture<Row> futureResult = bigtableDataClient.readRowAsync(tableId, ByteString.copyFromUtf8("key"), filter);
+   *
+   *   ApiFutures.addCallback(futureResult, new ApiFutureCallback<Row>() {
+   *     public void onFailure(Throwable t) {
+   *       if (t instanceof NotFoundException) {
+   *         System.out.println("Tried to read a non-existent table");
+   *       } else {
+   *         t.printStackTrace();
+   *       }
+   *     }
+   *     public void onSuccess(Row row) {
+   *       if (result != null) {
+   *          System.out.println("Got row: " + result);
+   *       }
+   *     }
+   *   }, MoreExecutors.directExecutor());
+   * }
+   * }</pre>
+   */
+  public ApiFuture<Row> readRowAsync(String tableId, ByteString rowKey, @Nullable Filter filter) {
+    Query query = Query.create(tableId).rowKey(rowKey);
+    if (filter != null) {
+      query = query.filter(filter);
+    }
+    return readRowCallable().futureCall(query);
+  }
+
+  /**
+   * Reads a single row. The returned callable object allows for customization of api invocation.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{@code
+   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   *   String tableId = "[TABLE]";
+   *
+   *   Query query = Query.create(tableId)
+   *          .rowKey("[KEY]")
+   *          .filter(FILTERS.qualifier().regex("[COLUMN PREFIX].*"));
+   *
+   *   // Synchronous invocation
+   *   try {
+   *     Row row = bigtableDataClient.readRowCallable().call(query);
+   *     if (row == null) {
+   *       System.out.println("Row not found");
+   *     }
+   *   } catch (RuntimeException e) {
+   *     e.printStackTrace();
+   *   }
+   *
+   *   // Asynchronous invocation
+   *   ApiFuture<Row> rowFuture = bigtableDataClient.readRowCallable().futureCall(query);
+   *
+   *   ApiFutures.addCallback(rowFuture, new ApiFutureCallback<Row>() {
+   *     public void onFailure(Throwable t) {
+   *       if (t instanceof NotFoundException) {
+   *         System.out.println("Tried to read a non-existent table");
+   *       } else {
+   *         t.printStackTrace();
+   *       }
+   *     }
+   *     public void onSuccess(Row row) {
+   *       if (row == null) {
+   *         System.out.println("Row not found");
+   *       }
+   *     }
+   *   }, MoreExecutors.directExecutor());
+   * }
+   * }</pre>
+   *
+   * @see UnaryCallable For call styles.
+   * @see Query For query options.
+   * @see com.google.cloud.bigtable.data.v2.models.Filters For the filter building DSL.
+   */
+  public UnaryCallable<Query, Row> readRowCallable() {
+    return stub.readRowCallable();
+  }
+
+  /**
+   * Reads a single row. This callable allows for customization of the logical representation of a
+   * row. It's meant for advanced use cases.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{@code
+   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   *   String tableId = "[TABLE]";
+   *
+   *   Query query = Query.create(tableId)
+   *          .rowKey("[KEY]")
+   *          .filter(FILTERS.qualifier().regex("[COLUMN PREFIX].*"));
+   *
+   *   // Synchronous invocation
+   *   CustomRow row = bigtableDataClient.readRowCallable(new CustomRowAdapter()).call(query));
+   *   // Do something with row
+   * }
+   * }</pre>
+   *
+   * @see ServerStreamingCallable For call styles.
+   * @see Query For query options.
+   * @see com.google.cloud.bigtable.data.v2.models.Filters For the filter building DSL.
+   */
+  public <RowT> UnaryCallable<Query, RowT> readRowCallable(RowAdapter<RowT> rowAdapter) {
+    return stub.createReadRowCallable(rowAdapter);
+  }
+
+  /**
+   * Convenience method for synchronously streaming the results of a {@link Query}.
    *
    * <p>Sample code:
    *
@@ -209,8 +526,7 @@ public class BigtableDataClient implements AutoCloseable {
    * // Import the filter DSL
    * import static com.google.cloud.bigtable.data.v2.models.Filters.FILTERS;
    *
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   String tableId = "[TABLE]";
    *
    *   Query query = Query.create(tableId)
@@ -239,13 +555,12 @@ public class BigtableDataClient implements AutoCloseable {
   }
 
   /**
-   * Convenience method for asynchronous streaming the results of a {@link Query}.
+   * Convenience method for asynchronously streaming the results of a {@link Query}.
    *
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   String tableId = "[TABLE]";
    *
    *   Query query = Query.create(tableId)
@@ -282,8 +597,7 @@ public class BigtableDataClient implements AutoCloseable {
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   String tableId = "[TABLE]";
    *
    *   Query query = Query.create(tableId)
@@ -345,8 +659,7 @@ public class BigtableDataClient implements AutoCloseable {
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   String tableId = "[TABLE]";
    *
    *   Query query = Query.create(tableId)
@@ -375,6 +688,32 @@ public class BigtableDataClient implements AutoCloseable {
   }
 
   /**
+   * Convenience method to synchronously return a sample of row keys in the table. The returned row
+   * keys will delimit contiguous sections of the table of approximately equal size, which can be
+   * used to break up the data for distributed tasks like mapreduces.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{@code
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
+   *   String tableId = "[TABLE_ID]";
+   *
+   *   List<KeyOffset> keyOffsets = bigtableDataClient.sampleRowKeys(tableId);
+   *   for(KeyOffset keyOffset : keyOffsets) {
+   *   // Do something with keyOffset
+   *   }
+   * } catch(ApiException e) {
+   *   e.printStackTrace();
+   * }
+   * }</pre>
+   *
+   * @throws com.google.api.gax.rpc.ApiException when a serverside error occurs
+   */
+  public List<KeyOffset> sampleRowKeys(String tableId) {
+    return ApiExceptions.callAndTranslateApiException(sampleRowKeysAsync(tableId));
+  }
+
+  /**
    * Convenience method to asynchronously return a sample of row keys in the table. The returned row
    * keys will delimit contiguous sections of the table of approximately equal size, which can be
    * used to break up the data for distributed tasks like mapreduces.
@@ -382,8 +721,7 @@ public class BigtableDataClient implements AutoCloseable {
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableClient bigtableDataClient = BigtableClient.create(instanceName)) {
+   * try (BigtableClient bigtableDataClient = BigtableClient.create("[PROJECT]", "[INSTANCE]")) {
    *   ApiFuture<List<KeyOffset>> keyOffsetsFuture = bigtableClient.sampleRowKeysAsync("[TABLE]");
    *
    *   ApiFutures.addCallback(keyOffsetsFuture, new ApiFutureCallback<List<KeyOffset>>() {
@@ -414,8 +752,7 @@ public class BigtableDataClient implements AutoCloseable {
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   // Synchronous invocation
    *   try {
    *     List<KeyOffset> keyOffsets = bigtableDataClient.sampleRowKeysCallable().call("[TABLE]");
@@ -448,14 +785,36 @@ public class BigtableDataClient implements AutoCloseable {
   }
 
   /**
+   * Convenience method to synchronously mutate a single row atomically. Cells already present in
+   * the row are left unchanged unless explicitly changed by the {@link RowMutation}.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{@code
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
+   *   RowMutation mutation = RowMutation.create("[TABLE]", "[ROW KEY]")
+   *     .setCell("[FAMILY NAME]", "[QUALIFIER]", "[VALUE]");
+   *
+   *   bigtableDataClient.mutateRow(mutation);
+   * } catch(ApiException e) {
+   *   e.printStackTrace();
+   * }
+   * }</pre>
+   *
+   * @throws com.google.api.gax.rpc.ApiException when a serverside error occurs
+   */
+  public void mutateRow(RowMutation rowMutation) {
+    ApiExceptions.callAndTranslateApiException(mutateRowAsync(rowMutation));
+  }
+
+  /**
    * Convenience method to asynchronously mutate a single row atomically. Cells already present in
    * the row are left unchanged unless explicitly changed by the {@link RowMutation}.
    *
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   RowMutation mutation = RowMutation.create("[TABLE]", "[ROW KEY]")
    *     .setCell("[FAMILY NAME]", "[QUALIFIER]", "[VALUE]");
    *
@@ -487,8 +846,7 @@ public class BigtableDataClient implements AutoCloseable {
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   RowMutation mutation = RowMutation.create("[TABLE]", "[ROW KEY]")
    *     .setCell("[FAMILY NAME]", "[QUALIFIER]", "[VALUE]");
    *
@@ -514,8 +872,7 @@ public class BigtableDataClient implements AutoCloseable {
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   try (BulkMutationBatcher batcher = bigtableDataClient.newBulkMutationBatcher()) {
    *     for (String someValue : someCollection) {
    *       RowMutation mutation = RowMutation.create("[TABLE]", "[ROW KEY]")
@@ -543,8 +900,36 @@ public class BigtableDataClient implements AutoCloseable {
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
+   *   BulkMutation batch = BulkMutation.create("[TABLE]");
+   *   for (String someValue : someCollection) {
+   *     batch.add("[ROW KEY]", Mutation.create().setCell("[FAMILY NAME]", "[QUALIFIER]", "[VALUE]"));
+   *   }
+   *   bigtableDataClient.bulkMutateRows(batch);
+   * } catch(ApiException e) {
+   *   e.printStackTrace();
+   * } catch(MutateRowsException e) {
+   *   e.printStackTrace();
+   * }
+   * }</pre>
+   *
+   * @throws com.google.api.gax.rpc.ApiException when a serverside error occurs
+   * @throws com.google.cloud.bigtable.data.v2.models.MutateRowsException if any of the entries
+   *     failed to be applied
+   */
+  public void bulkMutateRows(BulkMutation mutation) {
+    ApiExceptions.callAndTranslateApiException(bulkMutateRowsAsync(mutation));
+  }
+
+  /**
+   * Convenience method to mutate multiple rows in a batch. Each individual row is mutated
+   * atomically as in MutateRow, but the entire batch is not executed atomically. Unlike {@link
+   * #newBulkMutationBatcher()}, this method expects the mutations to be pre-batched.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{@code
+   * try (BigtableClient bigtableClient = BigtableClient.create("[PROJECT]", "[INSTANCE]")) {
    *   BulkMutation batch = BulkMutation.create("[TABLE]");
    *   for (String someValue : someCollection) {
    *     ApiFuture<Void> entryFuture = batch.add("[ROW KEY]",
@@ -579,8 +964,7 @@ public class BigtableDataClient implements AutoCloseable {
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   BulkMutation batch = BulkMutation.create("[TABLE]");
    *   for (String someValue : someCollection) {
    *     ApiFuture<Void> entryFuture = batch.add("[ROW KEY]",
@@ -595,13 +979,38 @@ public class BigtableDataClient implements AutoCloseable {
   }
 
   /**
+   * Convenience method to synchronously mutate a row atomically based on the output of a filter.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{@code
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
+   *   ConditionalRowMutation mutation = ConditionalRowMutation.create("[TABLE]", "[KEY]")
+   *     .condition(FILTERS.value().regex("old-value"))
+   *     .then(
+   *       Mutation.create()
+   *         .setCell("[FAMILY]", "[QUALIFIER]", "[VALUE]")
+   *       );
+   *
+   *   Boolean result = bigtableDataClient.checkAndMutateRow(mutation);
+   * } catch(ApiException e) {
+   *   e.printStackTrace();
+   * }
+   * }</pre>
+   *
+   * @throws com.google.api.gax.rpc.ApiException when a serverside error occurs
+   */
+  public Boolean checkAndMutateRow(ConditionalRowMutation mutation) {
+    return ApiExceptions.callAndTranslateApiException(checkAndMutateRowAsync(mutation));
+  }
+
+  /**
    * Convenience method to asynchronously mutate a row atomically based on the output of a filter.
    *
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   ConditionalRowMutation mutation = ConditionalRowMutation.create("[TABLE]", "[KEY]")
    *     .condition(FILTERS.value().regex("old-value"))
    *     .then(
@@ -636,8 +1045,7 @@ public class BigtableDataClient implements AutoCloseable {
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   ConditionalRowMutation mutation = ConditionalRowMutation.create("[TABLE]", "[KEY]")
    *     .condition(FILTERS.value().regex("old-value"))
    *     .then(
@@ -664,6 +1072,32 @@ public class BigtableDataClient implements AutoCloseable {
   }
 
   /**
+   * Convenience method that synchronously modifies a row atomically on the server. The method reads
+   * the latest existing timestamp and value from the specified columns and writes a new entry. The
+   * new value for the timestamp is the greater of the existing timestamp or the current server
+   * time. The method returns the new contents of all modified cells.
+   *
+   * <p>Sample code:
+   *
+   * <pre>{@code
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
+   *   ReadModifyWriteRow mutation = ReadModifyWriteRow.create("[TABLE]", "[KEY]")
+   *     .increment("[FAMILY]", "[QUALIFIER]", 1)
+   *     .append("[FAMILY2]", "[QUALIFIER2]", "suffix");
+   *
+   *   Row success = bigtableDataClient.readModifyWriteRow(mutation);
+   * } catch(ApiException e) {
+   *   e.printStackTrace();
+   * }
+   * }</pre>
+   *
+   * @throws com.google.api.gax.rpc.ApiException when a serverside error occurs
+   */
+  public Row readModifyWriteRow(ReadModifyWriteRow mutation) {
+    return ApiExceptions.callAndTranslateApiException(readModifyWriteRowAsync(mutation));
+  }
+
+  /**
    * Convenience method that asynchronously modifies a row atomically on the server. The method
    * reads the latest existing timestamp and value from the specified columns and writes a new
    * entry. The new value for the timestamp is the greater of the existing timestamp or the current
@@ -672,8 +1106,7 @@ public class BigtableDataClient implements AutoCloseable {
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   ReadModifyWriteRow mutation = ReadModifyWriteRow.create("[TABLE]", "[KEY]")
    *     .increment("[FAMILY]", "[QUALIFIER]", 1)
    *     .append("[FAMILY2]", "[QUALIFIER2]", "suffix");
@@ -708,8 +1141,7 @@ public class BigtableDataClient implements AutoCloseable {
    * <p>Sample code:
    *
    * <pre>{@code
-   * InstanceName instanceName = InstanceName.of("[PROJECT]", "[INSTANCE]");
-   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create(instanceName)) {
+   * try (BigtableDataClient bigtableDataClient = BigtableDataClient.create("[PROJECT]", "[INSTANCE]")) {
    *   ReadModifyWriteRow mutation = ReadModifyWriteRow.create("[TABLE]", "[KEY]")
    *     .increment("[FAMILY]", "[QUALIFIER]", 1)
    *     .append("[FAMILY2]", "[QUALIFIER2]", "suffix");
